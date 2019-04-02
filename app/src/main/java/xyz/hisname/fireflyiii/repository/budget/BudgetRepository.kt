@@ -5,6 +5,7 @@ import xyz.hisname.fireflyiii.data.local.dao.BudgetDataDao
 import xyz.hisname.fireflyiii.data.local.dao.BudgetListDataDao
 import xyz.hisname.fireflyiii.repository.models.budget.BudgetData
 import xyz.hisname.fireflyiii.repository.models.budget.budgetList.BudgetListData
+import java.math.BigDecimal
 
 class BudgetRepository(private val budget: BudgetDataDao, private val budgetList: BudgetListDataDao) {
 
@@ -15,6 +16,11 @@ class BudgetRepository(private val budget: BudgetDataDao, private val budgetList
     suspend fun insertBudget(budgetData: BudgetData){
         budget.insert(budgetData)
     }
+
+    @Suppress("RedundantSuspendModifier")
+    @WorkerThread
+    suspend fun deleteAllBudget() = budget.deleteAllBudget()
+
 
     @Suppress("RedundantSuspendModifier")
     @WorkerThread
@@ -33,9 +39,9 @@ class BudgetRepository(private val budget: BudgetDataDao, private val budgetList
     @Suppress("RedundantSuspendModifier")
     @WorkerThread
     suspend fun retrieveConstraintBudgetWithCurrency(startDate: String, endDate: String,
-                                                     currencyCode: String): MutableList<BudgetData>{
-        return budget.getConstraintBudgetWithCurrency(startDate, endDate, currencyCode)
-    }
+                                                     currencyCode: String) =
+            budget.getConstraintBudgetWithCurrency(startDate, endDate, currencyCode)
+
 
     @Suppress("RedundantSuspendModifier")
     @WorkerThread

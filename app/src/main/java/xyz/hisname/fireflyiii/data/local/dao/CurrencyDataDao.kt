@@ -9,7 +9,7 @@ import xyz.hisname.fireflyiii.repository.models.currency.CurrencyData
 abstract class CurrencyDataDao: BaseDao<CurrencyData> {
 
     @Query("SELECT * FROM currency")
-    abstract fun getAllCurrency(): LiveData<MutableList<CurrencyData>>
+    abstract fun getAllCurrency(): MutableList<CurrencyData>
 
     @Query("DELETE FROM currency WHERE currencyId = :currencyId")
     abstract fun deleteCurrencyById(currencyId: Long): Int
@@ -17,9 +17,8 @@ abstract class CurrencyDataDao: BaseDao<CurrencyData> {
     @Query("SELECT * FROM currency WHERE code = :currencyCode")
     abstract fun getCurrencyByCode(currencyCode: String): MutableList<CurrencyData>
 
-    @Suppress("AndroidUnresolvedRoomSqlReference")
-    @Query("SELECT * FROM currency WHERE currencyDefault = :default")
-    abstract fun getDefaultCurrency(default: Boolean = true): LiveData<MutableList<CurrencyData>>
+    @Query("SELECT * FROM currency WHERE currencyDefault = :defaultCurrency")
+    abstract fun getDefaultCurrency(defaultCurrency: Boolean = true): MutableList<CurrencyData>
 
     @Query("SELECT * FROM currency WHERE enabled = :enabled")
     abstract fun getEnabledCurrencyByCode(enabled: Boolean = true): LiveData<MutableList<CurrencyData>>
@@ -27,4 +26,9 @@ abstract class CurrencyDataDao: BaseDao<CurrencyData> {
     @Query("SELECT * FROM currency WHERE currencyId =:currencyId")
     abstract fun getCurrencyById(currencyId: Long): MutableList<CurrencyData>
 
+    @Query("DELETE FROM currency WHERE currencyDefault =:defaultCurrency")
+    abstract fun deleteDefaultCurrency(defaultCurrency: Boolean = true): Int
+
+    @Query("DELETE FROM currency")
+    abstract fun deleteAllCurrency(): Int
 }

@@ -9,20 +9,19 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import xyz.hisname.fireflyiii.data.local.dao.AppDatabase
-import xyz.hisname.fireflyiii.data.remote.api.AttachmentService
 import xyz.hisname.fireflyiii.data.remote.api.TransactionService
 import xyz.hisname.fireflyiii.repository.BaseViewModel
 import xyz.hisname.fireflyiii.repository.attachment.AttachmentRepository
 import xyz.hisname.fireflyiii.repository.models.ApiResponses
 import xyz.hisname.fireflyiii.repository.models.attachment.AttachmentData
-import xyz.hisname.fireflyiii.repository.models.attachment.AttachmentModel
 import xyz.hisname.fireflyiii.repository.models.error.ErrorModel
 import xyz.hisname.fireflyiii.repository.models.transaction.TransactionData
 import xyz.hisname.fireflyiii.repository.models.transaction.TransactionSuccessModel
-import xyz.hisname.fireflyiii.util.FileUtils
 import xyz.hisname.fireflyiii.util.network.NetworkErrors
 import xyz.hisname.fireflyiii.util.network.retrofitCallback
 import java.math.BigDecimal
+import java.text.DecimalFormat
+import kotlin.math.absoluteValue
 
 class TransactionsViewModel(application: Application): BaseViewModel(application) {
 
@@ -52,55 +51,283 @@ class TransactionsViewModel(application: Application): BaseViewModel(application
         transactionService?.getAllTransactions("","", "all")?.enqueue(retrofitCallback({ response ->
             if (response.isSuccessful) {
                 val networkData = response.body()
-                networkData?.data?.forEachIndexed { _, data ->
-                    scope.launch(Dispatchers.IO) { repository.insertTransaction(data) }
+                recentData = networkData?.data?.toMutableList() ?: arrayListOf()
+                scope.launch(Dispatchers.IO){
+                    networkData?.data?.forEachIndexed { _, transactionData ->
+                        repository.insertTransaction(transactionData)
+                    }
+                }.invokeOnCompletion {
+                    if(limit < networkData?.data?.size ?: 0){
+                        data.postValue(recentData.take(limit).toMutableList())
+                    } else {
+                        data.postValue(recentData)
+                    }
+                    isLoading.postValue(false)
+                }
+            } else {
+                scope.launch(Dispatchers.IO){
+                    recentData = repository.recentTransactions(limit)
+                }.invokeOnCompletion {
+                    data.postValue(recentData)
+                    isLoading.postValue(false)
                 }
             }
         })
-        { throwable -> apiResponse.postValue(NetworkErrors.getThrowableMessage(throwable.localizedMessage)) })
-        scope.async(Dispatchers.IO){
-            recentData = repository.recentTransactions(limit)
+        { throwable ->
+            apiResponse.postValue(NetworkErrors.getThrowableMessage(throwable.localizedMessage))
+            scope.launch(Dispatchers.IO){
+                recentData = repository.recentTransactions(limit)
+            }.invokeOnCompletion {
+                data.postValue(recentData)
+                isLoading.postValue(false)
+            }
+        })
+        return data
+    }
+
+    fun getWithdrawalAmountWithCurrencyCode(startDate: String, endDate: String, currencyCode: String): LiveData<Double>{
+        isLoading.value = true
+        var withdrawData: Double = 0.toDouble()
+        val decimalFormat = DecimalFormat(".##")
+        val data: MutableLiveData<Double> = MutableLiveData()
+        val transactionData: MutableList<TransactionData> = arrayListOf()
+        transactionService?.getPaginatedTransactions(startDate, endDate, "withdrawal", 1)?.enqueue(retrofitCallback({ response ->
+            if (response.isSuccessful) {
+                val networkData = response.body()
+                if (networkData != null) {
+                    if(networkData.meta.pagination.current_page == networkData.meta.pagination.total_pages){
+                        scope.launch(Dispatchers.IO){
+                            repository.deleteTransactionsByDate(startDate, endDate, convertString("withdrawal"))
+                        }.invokeOnCompletion {
+                            transactionData.addAll(networkData.data)
+                            if(networkData.meta.pagination.total_pages > networkData.meta.pagination.current_page) {
+                                for(items in 2..networkData.meta.pagination.total_pages){
+                                    transactionService?.getPaginatedTransactions(startDate, endDate, "withdrawal", items)?.enqueue(retrofitCallback({ pagination ->
+                                        pagination.body()?.data?.forEachIndexed{ _, transData ->
+                                            transactionData.add(transData)
+                                        }
+                                    }))
+                                }
+                            }
+                            scope.launch(Dispatchers.IO){
+                                transactionData.forEachIndexed { _, transData ->
+                                    repository.insertTransaction(transData)
+                                }
+                            }.invokeOnCompletion {
+                                scope.launch(Dispatchers.IO) {
+                                    withdrawData = repository.allWithdrawalWithCurrencyCode(startDate, endDate, currencyCode)
+                                }.invokeOnCompletion {
+                                    data.postValue(decimalFormat.format(withdrawData.absoluteValue).toDouble())
+                                    isLoading.postValue(false)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                val responseError = response.errorBody()
+                if (responseError != null) {
+                    val errorBody = String(responseError.bytes())
+                    val gson = Gson().fromJson(errorBody, ErrorModel::class.java)
+                    apiResponse.postValue(gson.message)
+                }
+                scope.launch(Dispatchers.IO) {
+                    withdrawData = repository.allWithdrawalWithCurrencyCode(startDate, endDate, currencyCode)
+                }.invokeOnCompletion {
+                    data.postValue(decimalFormat.format(withdrawData.absoluteValue).toDouble())
+                    isLoading.postValue(false)
+                }
+
+            }
+        })
+        { throwable ->
+            scope.launch(Dispatchers.IO) {
+                withdrawData = repository.allWithdrawalWithCurrencyCode(startDate, endDate, currencyCode)
+            }.invokeOnCompletion {
+                data.postValue(decimalFormat.format(withdrawData.absoluteValue).toDouble())
+                isLoading.postValue(false)
+            }
+            apiResponse.postValue(NetworkErrors.getThrowableMessage(throwable.localizedMessage))
+        })
+        return data
+    }
+
+    fun getDepositAmountWithCurrencyCode(startDate: String, endDate: String, currencyCode: String): LiveData<Double>{
+        isLoading.value = true
+        var depositData: Double = 0.toDouble()
+        val decimalFormat = DecimalFormat(".##")
+        val data: MutableLiveData<Double> = MutableLiveData()
+        val transactionData: MutableList<TransactionData> = arrayListOf()
+        transactionService?.getPaginatedTransactions(startDate, endDate, "deposit", 1)?.enqueue(retrofitCallback({ response ->
+            if (response.isSuccessful) {
+                val networkData = response.body()
+                if (networkData != null) {
+                    if(networkData.meta.pagination.current_page == networkData.meta.pagination.total_pages){
+                        scope.launch(Dispatchers.IO){
+                            repository.deleteTransactionsByDate(startDate, endDate, convertString("deposit"))
+                        }.invokeOnCompletion {
+                            transactionData.addAll(networkData.data)
+                            if(networkData.meta.pagination.total_pages > networkData.meta.pagination.current_page) {
+                                for(items in 2..networkData.meta.pagination.total_pages){
+                                    transactionService?.getPaginatedTransactions(startDate, endDate, "deposit", items)?.enqueue(retrofitCallback({ pagination ->
+                                        pagination.body()?.data?.forEachIndexed{ _, transData ->
+                                            transactionData.add(transData)
+                                        }
+                                    }))
+                                }
+                            }
+                            scope.launch(Dispatchers.IO){
+                                transactionData.forEachIndexed { _, transData ->
+                                    repository.insertTransaction(transData)
+                                }
+                            }.invokeOnCompletion {
+                                scope.launch(Dispatchers.IO) {
+                                    depositData = repository.allDepositWithCurrencyCode(startDate, endDate, currencyCode)
+                                }.invokeOnCompletion {
+                                    data.postValue(decimalFormat.format(depositData).toDouble())
+                                    isLoading.postValue(false)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                val responseError = response.errorBody()
+                if (responseError != null) {
+                    val errorBody = String(responseError.bytes())
+                    val gson = Gson().fromJson(errorBody, ErrorModel::class.java)
+                    apiResponse.postValue(gson.message)
+                }
+                scope.launch(Dispatchers.IO) {
+                    depositData = repository.allDepositWithCurrencyCode(startDate, endDate, currencyCode)
+                }.invokeOnCompletion {
+                    data.postValue(decimalFormat.format(depositData).toDouble())
+                    isLoading.postValue(false)
+                }
+
+            }
+        })
+        { throwable ->
+            scope.launch(Dispatchers.IO) {
+                depositData = repository.allDepositWithCurrencyCode(startDate, endDate, currencyCode)
+            }.invokeOnCompletion {
+                data.postValue(decimalFormat.format(depositData).toDouble())
+                isLoading.postValue(false)
+            }
+            apiResponse.postValue(NetworkErrors.getThrowableMessage(throwable.localizedMessage))
+        })
+        return data
+    }
+
+    // My god.... the name of this function is sooooooo looong...
+    fun getTransactionsByAccountAndCurrencyCodeAndDate(startDate: String, endDate: String,
+                                                               currencyCode: String,
+                                                               accountName: String): LiveData<BigDecimal>{
+        isLoading.value = true
+        var transactionAmount: BigDecimal = 0.toBigDecimal()
+        var transactionData: MutableList<TransactionData> = arrayListOf()
+        val data: MutableLiveData<BigDecimal> = MutableLiveData()
+        loadRemoteData(startDate, endDate, "all")
+        scope.launch(Dispatchers.IO){
+            transactionData = repository.getTransactionsByAccountAndCurrencyCodeAndDate(startDate, endDate, currencyCode, accountName)
         }.invokeOnCompletion {
-            data.postValue(recentData)
+            isLoading.postValue(false)
+            transactionData.forEachIndexed { _, transactionData ->
+                transactionAmount = transactionAmount.add(transactionData.transactionAttributes?.amount?.toBigDecimal()?.abs())
+            }
+            data.postValue(transactionAmount)
+        }
+        return data
+    }
+
+    fun getUniqueCategoryByDate(startDate: String, endDate: String, currencyCode: String,
+                                sourceName: String, transactionType: String): MutableLiveData<MutableList<String>>{
+        isLoading.value = true
+        var transactionData: MutableList<String> = arrayListOf()
+        val data: MutableLiveData<MutableList<String>> = MutableLiveData()
+        scope.launch(Dispatchers.IO){
+            transactionData = repository.getUniqueCategoryByDate(startDate, endDate, currencyCode, sourceName, transactionType)
+        }.invokeOnCompletion {
+            data.postValue(transactionData)
             isLoading.postValue(false)
         }
         return data
     }
 
-    fun getWithdrawalAmountWithCurrencyCode(startDate: String, endDate: String, currencyCode: String): LiveData<BigDecimal>{
+    fun getUniqueBudgetByDate(startDate: String, endDate: String, currencyCode: String,
+                              sourceName: String, transactionType: String): MutableLiveData<MutableList<String>>{
         isLoading.value = true
-        var withdrawData: MutableList<TransactionData> = arrayListOf()
-        var withdrawAmount: BigDecimal = 0.toBigDecimal()
-        val data: MutableLiveData<BigDecimal> = MutableLiveData()
-        loadRemoteData(startDate, endDate, "withdrawal")
-        scope.async(Dispatchers.IO) {
-            withdrawData = repository.allWithdrawalWithCurrencyCode(startDate, endDate, currencyCode)
+        var transactionData: MutableList<String> = arrayListOf()
+        val data: MutableLiveData<MutableList<String>> = MutableLiveData()
+        scope.launch(Dispatchers.IO){
+            transactionData = repository.getUniqueBudgetByDate(startDate, endDate, currencyCode, sourceName, transactionType)
         }.invokeOnCompletion {
-            withdrawData.forEachIndexed { _, transactionData ->
-                withdrawAmount = withdrawAmount.add(transactionData.transactionAttributes?.amount?.toBigDecimal()?.abs())
-            }
-            data.postValue(withdrawAmount)
+            data.postValue(transactionData)
             isLoading.postValue(false)
         }
         return data
     }
 
-    fun getDepositAmountWithCurrencyCode(startDate: String, endDate: String, currencyCode: String): LiveData<BigDecimal>{
+    fun getTotalTransactionAmountByDateAndCurrency(startDate: String, endDate: String,
+                                             currencyCode: String, accountName: String,
+                                                   transactionType: String): MutableLiveData<Double>{
         isLoading.value = true
-        var depositData: MutableList<TransactionData> = arrayListOf()
-        var depositAmount: BigDecimal = 0.toBigDecimal()
-        val data: MutableLiveData<BigDecimal> = MutableLiveData()
-        loadRemoteData(startDate, endDate, "deposit")
-        scope.async(Dispatchers.IO) {
-            depositData = repository.allDepositWithCurrencyCode(startDate, endDate, currencyCode)
+        var transactionAmount: Double = 0.toDouble()
+        val data: MutableLiveData<Double> = MutableLiveData()
+        scope.launch(Dispatchers.IO){
+            transactionAmount = repository.getTotalTransactionType(startDate, endDate,
+                    currencyCode, accountName, transactionType)
         }.invokeOnCompletion {
-            depositData.forEachIndexed { _, transactionData ->
-                depositAmount = depositAmount.add(transactionData.transactionAttributes?.amount?.toBigDecimal()?.abs())
-            }
-            data.postValue(depositAmount)
             isLoading.postValue(false)
+            data.postValue(transactionAmount)
         }
         return data
+    }
+
+
+
+    fun getTransactionByDateAndCategoryAndCurrency(startDate: String, endDate: String,
+                                                   currencyCode: String, accountName: String,
+                                                   transactionType: String, categoryName: String?): MutableLiveData<Double>{
+        isLoading.value = true
+        var transactionAmount: Double = 0.toDouble()
+        val data: MutableLiveData<Double> = MutableLiveData()
+        scope.launch(Dispatchers.IO){
+            transactionAmount = repository.getTransactionByDateAndCategoryAndCurrency(startDate, endDate,
+                    currencyCode, accountName, transactionType, categoryName)
+        }.invokeOnCompletion {
+            isLoading.postValue(false)
+            data.postValue(transactionAmount)
+        }
+        return data
+    }
+
+    fun getTransactionByDateAndBudgetAndCurrency(startDate: String, endDate: String,
+                                                   currencyCode: String, accountName: String,
+                                                   transactionType: String, budgetName: String?): MutableLiveData<Double>{
+        isLoading.value = true
+        var transactionAmount: Double = 0.toDouble()
+        val data: MutableLiveData<Double> = MutableLiveData()
+        scope.launch(Dispatchers.IO){
+            transactionAmount = repository.getTransactionByDateAndBudgetAndCurrency(startDate, endDate,
+                    currencyCode, accountName, transactionType, budgetName)
+        }.invokeOnCompletion {
+            isLoading.postValue(false)
+            data.postValue(transactionAmount)
+        }
+        return data
+    }
+
+    fun getTransactionListByDateAndAccount(startDate: String, endDate: String,
+                                            accountName: String): MutableLiveData<MutableList<TransactionData>>{
+        val transactionData: MutableLiveData<MutableList<TransactionData>> = MutableLiveData()
+        var data: MutableList<TransactionData> = arrayListOf()
+        scope.async(Dispatchers.IO) {
+            data = repository.getTransactionListByDateAndAccount(startDate, endDate, accountName)
+        }.invokeOnCompletion {
+            transactionData.postValue(data)
+        }
+        return transactionData
     }
 
     fun addTransaction(type: String, description: String,

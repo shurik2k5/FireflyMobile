@@ -6,8 +6,6 @@ import xyz.hisname.fireflyiii.repository.models.currency.CurrencyData
 
 class CurrencyRepository(private val currencyDao: CurrencyDataDao) {
 
-    val allCurrency = currencyDao.getAllCurrency()
-    val defaultCurrency = currencyDao.getDefaultCurrency()
     val enabledCurrency = currencyDao.getEnabledCurrencyByCode()
 
     @Suppress("RedundantSuspendModifier")
@@ -25,5 +23,21 @@ class CurrencyRepository(private val currencyDao: CurrencyDataDao) {
     @Suppress("RedundantSuspendModifier")
     @WorkerThread
     suspend fun getCurrencyById(currencyId: Long) = currencyDao.getCurrencyById(currencyId)
+
+    @Suppress("RedundantSuspendModifier")
+    @WorkerThread
+    suspend fun deleteDefaultCurrency() = currencyDao.deleteDefaultCurrency()
+
+    @Suppress("RedundantSuspendModifier")
+    @WorkerThread
+    suspend fun defaultCurrency() = currencyDao.getDefaultCurrency()
+
+    @Suppress("RedundantSuspendModifier")
+    @WorkerThread
+    suspend fun deleteAllCurrency() = currencyDao.deleteAllCurrency()
+
+    @Suppress("RedundantSuspendModifier")
+    @WorkerThread
+    suspend fun allCurrency() = currencyDao.getAllCurrency()
 
 }
